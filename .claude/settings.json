@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-pixel-charts": {
+      "source": {
+        "source": "directory",
+        "path": "./"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "pixel-charts@claude-pixel-charts": true
+  }
+}
