@@ -20,11 +20,21 @@
 - [ ] Shared tooltip: every series' value at the hovered x, as in Grafana.
 - [ ] Click to pin a tooltip; arrow keys step between points.
 
+## Terminals
+
+- [x] Pixels only where kitty graphics work; elsewhere withdraw `draw_chart`
+      and leave charts to easel (checked live in Ghostty and with
+      `TERM=xterm-256color`).
+- [x] Hide a charted Prometheus result from easel so each query gets one chart.
+- [ ] Detect kitty graphics from the terminal itself (a `$.ui.blit` on a
+      mounted Image is refused while it shows its alt) instead of `TERM`
+      guesses, for SSH sessions. A `settings.read` override of easel's option
+      is ruled out: `cc-plugin-sec-default` skips that hook.
+
 ## Packaging
 
-- [ ] Add a license (`LICENSE` file or `license` in `plugin.json`) and an
-      `author` in `plugin.json`.
-- [ ] Add a `description` to `.claude-plugin/marketplace.json`.
+- [x] Add a license (MIT) and an `author` in `plugin.json`.
+- [x] Add a `description` to `.claude-plugin/marketplace.json`.
 - [ ] Run `gh auth setup-git` so HTTPS pushes work.
 - [ ] Rename the plugin itself (`plugin.json` `name`) to `claude-pixel-charts`?
       It renames the slash command and the MCP tool name.

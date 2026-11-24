@@ -24,6 +24,8 @@ const DEMO = `Pixel-charts demo: call draw_chart three times, one call per sampl
 3. {"type":"scatter","title":"Request size vs latency","series":[{"name":"GET","points":[{"x":1,"y":20},{"x":2,"y":28},{"x":3,"y":31},{"x":5,"y":45},{"x":8,"y":60},{"x":9,"y":71}]},{"name":"POST","points":[{"x":2,"y":55},{"x":4,"y":70},{"x":6,"y":92},{"x":7,"y":101},{"x":10,"y":140}]}]}`
 
 type Mode = 'image' | 'raster'
+/** `none`: no kitty graphics here, so pixel-charts draws nothing and withdraws draw_chart. */
+type SessionMode = Mode | 'none'
 type Drawn = {
   cols: number
   rows: number
@@ -46,17 +48,21 @@ type Drawn = {
 const cache = new Map<string, Drawn>()
 const CACHE_SIZE = 20
 
-async function modeOf($: EngineInterface, isFullscreen: boolean | undefined): Promise<Mode> {
+async function detectMode($: EngineInterface): Promise<SessionMode> {
   const forced = await $.env.get('PIXEL_CHARTS_MODE')
   if (forced === 'image' || forced === 'raster') return forced
-  if (await $.env.get('TMUX')) return 'raster'
+  if (await $.env.get('TMUX')) return 'none'
   const term = (await $.env.get('TERM')) ?? ''
   const program = (await $.env.get('TERM_PROGRAM')) ?? ''
   if (term.includes('kitty') || (await $.env.get('KITTY_WINDOW_ID'))) return 'image'
   if (term.includes('ghostty') || program === 'ghostty') return 'image'
-  if (program === 'iTerm.app' && isFullscreen) return 'image'
-  return 'raster'
+  if (program === 'iTerm.app') return 'image'
+  return 'none'
 }
+
+// The environment is fixed for the process; a reload starts the module, and this, over.
+let sessionMode: Promise<SessionMode> | undefined
+const modeOf = ($: EngineInterface) => (sessionMode ??= detectMode($))
 
 async function isDarkTheme($: EngineInterface): Promise<boolean> {
   const row = (await $.config.list()).find(r => r.key === 'theme')
@@ -140,6 +146,10 @@ export const register: Register = on => {
       name: 'pixel-charts-demo',
       description: 'Ask Claude to draw one sample bar, line and scatter chart',
     })
+    await $.command.register({
+      name: 'pixel-charts-status',
+      description: 'Show whether pixel-charts draws charts in this terminal',
+    })
     return next(e)
   })
 
@@ -148,6 +158,22 @@ export const register: Register = on => {
     return { text: 'Asked Claude to draw a bar, a line and a scatter sample.', isTextDisplayOnly: true }
   })
 
+  on('command.run', { command: 'pixel-charts-status' }, async $ => {
+    const mode = await modeOf($)
+    const offered = (await $.tool.list()).some(t => TOOL.test(t.name))
+    const lines = [
+      `pixel-charts mode: ${mode}${mode === 'none' ? ' (no kitty graphics: charts are left to Claude Code)' : ''}`,
+      `draw_chart offered to Claude: ${offered ? 'yes' : 'no'}`,
+    ]
+    return { text: lines.join('\n'), isTextDisplayOnly: true }
+  })
+
+  on('tool.list', async ($, e, next) => {
+    const tools = await next(e)
+    if (tools.deny !== undefined || (await modeOf($)) !== 'none') return tools
+    return { value: tools.value.filter(t => !TOOL.test(t.name)) }
+  }).catch(($, e, next) => next(e))
+
   on('config.set', { key: 'theme' }, async ($, e, next) => {
     const result = await next(e)
     await $.ui.invalidate('ui.render')
@@ -155,11 +181,13 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || (await modeOf($)) === 'none') return next(e)
     const spec = e.props.isRunning || e.props.isErrored ? undefined : await chartSpecOf($, e.props)
-    if (!spec || e.surface !== 'terminal') return next(e)
+    if (!spec) return next(e)
     const ui = $.ui.resolve(e)
     const chart = await chartOf($, ui, e.viewport, spec, e.requestId, e.requestId, 1)
-    const row = await next(e)
+    // Charted here: the hooks beneath (easel's auto charts) get no result to chart again.
+    const row = await next(AUTO.test(e.props.tool) ? { ...e, props: { ...e.props, output: undefined } } : e)
     return (
       <ui.Box flexDirection="column">
         {row}
@@ -172,6 +200,7 @@ export const register: Register = on => {
     const done = e.props.calls.filter(c => !c.isRunning && !c.isErrored)
     if (e.props.isExpanded || !done.some(c => TOOL.test(c.tool) || AUTO.test(c.tool)) || e.surface !== 'terminal')
       return next(e)
+    if ((await modeOf($)) === 'none') return next(e)
     const ui = $.ui.resolve(e)
     const picked: { spec: ChartSpec; id: string }[] = []
     let hasAuto = false
@@ -186,7 +215,8 @@ export const register: Register = on => {
     const charts = []
     for (const { spec, id } of picked) charts.push(await chartOf($, ui, e.viewport, spec, id, e.requestId, 1 / picked.length))
     if (!charts.length) return next(e)
-    const row = await next(e)
+    const calls = hasAuto ? e.props.calls.map(c => (AUTO.test(c.tool) ? { ...c, output: undefined } : c)) : e.props.calls
+    const row = await next({ ...e, props: { ...e.props, calls } })
     return (
       <ui.Box flexDirection="column">
         {row}
@@ -224,7 +254,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const { tool, output, isErrored } = e.props
     const summary = TOOL.test(tool) && !isErrored && specOf(output) ? summaryOf(output) : undefined
-    if (!summary || e.surface !== 'terminal') return next(e)
+    if (!summary || e.surface !== 'terminal' || (await modeOf($)) === 'none') return next(e)
     const { Text } = $.ui.resolve(e)
     return <Text dimColor>{summary}</Text>
   })
@@ -241,7 +271,8 @@ async function chartOf(
   site: string,
   share: number,
 ) {
-  const mode = await modeOf($, viewport?.isFullscreen)
+  const sessionMode = await modeOf($)
+  const mode: Mode = sessionMode === 'none' ? 'raster' : sessionMode
   const isDark = await isDarkTheme($)
   const rows = mode === 'image' ? 16 : 12
   const probe = axesOf(spec, 80)

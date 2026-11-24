@@ -1,11 +1,19 @@
 {
   "name": "pixel-charts",
   "version": "0.1.0",
-  "description": "draw_chart MCP tool whose results render as pixel charts (kitty graphics) or half-block rasters",
+  "description": "Pixel charts in the Claude Code transcript with kitty graphics: a draw_chart tool and Grafana Prometheus auto charts, with hover tooltips",
+  "author": {
+    "name": "skeetmtp",
+    "url": "https://github.com/skeetmtp"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/skeetmtp/claude-pixel-charts",
   "mcpServers": {
     "pixel-charts": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server/server.mjs"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server/server.mjs"
+      ]
     }
   }
 }

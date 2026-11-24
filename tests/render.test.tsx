@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
+import { expect, type Plugin, test } from 'claude-code/testing'
 
 const SPEC = { type: 'line', title: 'Signups', x: ['Jan', 'Feb', 'Mar'], series: [{ name: 'Free', values: [120, 135, 150] }] }
 const OUTPUT = [
@@ -40,6 +41,7 @@ for (const mode of ['raster', 'image'] as const) {
 }
 
 test('a standalone result shows the summary, not the JSON', async ($, on) => {
+  on('env.get', (_, e) => ({ value: e.name === 'TERM' ? 'xterm-kitty' : undefined }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
@@ -79,7 +81,7 @@ const grafana = (id: string, ts: number) => ({
 })
 
 test('a group of Prometheus queries charts the newest one alone', async ($, on) => {
-  on('env.get', () => ({ value: undefined }))
+  on('env.get', (_, e) => ({ value: e.name === 'TERM' ? 'xterm-kitty' : undefined }))
   on('config.list', () => ({ value: [] }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -121,7 +123,7 @@ test('PIXEL_CHARTS_AUTO=off leaves Prometheus rows to the engine', async ($, on)
 })
 
 test('a newer instant query does not hide the range query before it', async ($, on) => {
-  on('env.get', () => ({ value: undefined }))
+  on('env.get', (_, e) => ({ value: e.name === 'TERM' ? 'xterm-kitty' : undefined }))
   on('config.list', () => ({ value: [] }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -194,7 +196,7 @@ test('hovering the chart shows the nearest value, and leaving clears it', async 
 })
 
 test('no hover layer on the main screen, where the terminal keeps the mouse', async ($, on) => {
-  on('env.get', () => ({ value: undefined }))
+  on('env.get', (_, e) => ({ value: e.name === 'TERM' ? 'xterm-kitty' : undefined }))
   on('config.list', () => ({ value: [] }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -257,5 +259,128 @@ test('one full-width image chart stays within the budget', async ($, on) => {
   })
 
   expect(await ui.find({ key: 'chart-toolu_w' })).toBeDefined()
+  await ui.unmount()
+})
+
+const NO_KITTY = (_: unknown, e: { name: string }) => ({ value: e.name === 'TERM' ? 'xterm-256color' : undefined })
+
+test('without kitty graphics the chart is left to the engine and easel', async ($, on) => {
+  on('env.get', NO_KITTY)
+  on('config.list', () => ({ value: [] }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>called grafana</Text>
+  })
+
+  const ui = await $.ui.mount({
+    plugin: 'pixel-charts',
+    surface: 'terminal',
+    component: 'ToolGroup',
+    requestId: 'group-n',
+    viewport: { columns: 100, rows: 40 },
+    props: { calls: [grafana('toolu_n', 1795524373)], isActive: false, isExpanded: false },
+  })
+
+  expect(await ui.find({ key: 'chart-toolu_n' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'called grafana' })).toBeDefined()
+  await ui.unmount()
+})
+
+/** A plugin beside pixel-charts: lists the tools through its hooks, and toasts what it saw. */
+const PROBE: Plugin = {
+  name: 'probe',
+  register(on) {
+    on('session.start', async ($, e, next) => {
+      const tools = (await $.tool.list()).map(t => t.name)
+      $.ui.toast(JSON.stringify({ tools }))
+      return next(e)
+    })
+  },
+}
+
+const probed = (on: On) => {
+  const seen: { tools?: string[] } = {}
+  on('ui.toast', (_, e) => {
+    Object.assign(seen, JSON.parse(e.text))
+    return { value: undefined }
+  })
+  return seen
+}
+
+const engineBeneath = (on: On) => {
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('tool.list', () => ({
+    value: [
+      { name: 'mcp__plugin_pixel-charts_pixel-charts__draw_chart', description: '', mcp: true },
+      { name: 'mcp__easel__chart', description: '', mcp: true },
+    ],
+  }))
+}
+
+test('without kitty graphics draw_chart is withdrawn', { plugins: [PROBE] }, async ($, on) => {
+  on('env.get', NO_KITTY)
+  const noKittySeen = probed(on)
+  engineBeneath(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(noKittySeen.tools).toEqual(['mcp__easel__chart'])
+})
+
+test('with kitty graphics draw_chart stays', { plugins: [PROBE] }, async ($, on) => {
+  on('env.get', (_, e) => ({ value: e.name === 'TERM_PROGRAM' ? 'ghostty' : undefined }))
+  const kittySeen = probed(on)
+  engineBeneath(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(kittySeen.tools?.length).toBe(2)
+})
+
+const KITTY = (_: unknown, e: { name: string }) => ({ value: e.name === 'TERM' ? 'xterm-kitty' : undefined })
+
+test('a charted Prometheus result is not handed to the hooks beneath, so easel does not chart it again', async ($, on) => {
+  on('env.get', KITTY)
+  on('config.list', () => ({ value: [] }))
+  let beneath: readonly { tool: string; output?: unknown }[] = []
+  on('ui.render', ($, e) => {
+    if (e.component === 'ToolGroup') beneath = e.props.calls
+    const { Text } = $.ui.resolve(e)
+    return <Text>called grafana 2 times</Text>
+  })
+
+  const ui = await $.ui.mount({
+    plugin: 'pixel-charts',
+    surface: 'terminal',
+    component: 'ToolGroup',
+    requestId: 'group-e',
+    viewport: { columns: 100, rows: 40 },
+    props: { calls: [grafana('toolu_e1', 1795524373), LINE_CALL], isActive: false, isExpanded: false },
+  })
+
+  expect(await ui.find({ key: 'chart-toolu_e1' })).toBeDefined()
+  expect(beneath.map(c => c.output === undefined)).toEqual([true, false])
+  await ui.unmount()
+})
+
+test('without kitty graphics the hooks beneath get every result, for easel to chart', async ($, on) => {
+  on('env.get', NO_KITTY)
+  on('config.list', () => ({ value: [] }))
+  let beneath: readonly { tool: string; output?: unknown }[] = []
+  on('ui.render', ($, e) => {
+    if (e.component === 'ToolGroup') beneath = e.props.calls
+    const { Text } = $.ui.resolve(e)
+    return <Text>called grafana</Text>
+  })
+
+  const ui = await $.ui.mount({
+    plugin: 'pixel-charts',
+    surface: 'terminal',
+    component: 'ToolGroup',
+    requestId: 'group-f',
+    viewport: { columns: 100, rows: 40 },
+    props: { calls: [grafana('toolu_f1', 1795524373)], isActive: false, isExpanded: false },
+  })
+
+  expect(beneath[0]?.output).toBeDefined()
   await ui.unmount()
 })

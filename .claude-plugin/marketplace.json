@@ -1,5 +1,13 @@
 {
   "name": "claude-pixel-charts",
-  "owner": { "name": "skeetmtp" },
-  "plugins": [{ "name": "pixel-charts", "source": "./" }]
+  "description": "pixel-charts: kitty-graphics charts for Claude Code",
+  "owner": {
+    "name": "skeetmtp"
+  },
+  "plugins": [
+    {
+      "name": "pixel-charts",
+      "source": "./"
+    }
+  ]
 }
