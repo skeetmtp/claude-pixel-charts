@@ -1,0 +1,5 @@
+{
+  "name": "claude-pixel-charts",
+  "owner": { "name": "skeetmtp" },
+  "plugins": [{ "name": "pixel-charts", "source": "./" }]
+}
